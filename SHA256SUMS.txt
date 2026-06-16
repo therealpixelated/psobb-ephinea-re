@@ -1,0 +1,7 @@
+# SHA-256 of the binary artifacts in this repo.
+# The packed ephinea.dll and the unpacked .bin are the SAME build.
+# ephinea.dll on-disk size = 12,671,368 bytes (PE32). MD5 = 7cab3e249e4aacf1d0cec6853fddaa25
+# Unpacked .bin = 52,322,304 bytes (SizeOfImage 0x031E6000), image base 0x78480000.
+
+2b4d15129b6a7889edbd12abe6d0eb292e9b49a06b6dde6c8711bfbadb8a3c89  ephinea.dll
+57e23f79af3cb9fbc585d2f6831ac52035a1ff654286cc5b4c4adf30792ec9ed  unpacked/ephinea_unpacked_base0x78480000.bin
