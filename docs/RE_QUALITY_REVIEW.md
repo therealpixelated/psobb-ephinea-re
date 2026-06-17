@@ -12,9 +12,9 @@ The fork is a **strong scaffold**, not finished RE. It correctly encodes the cas
 | Artifact | Honest completeness | Notes |
 |---|---|---|
 | `92va_apply.c` | **~95%** | VA list and factor classes match decompile; op order on dual-listed VAs is correct |
-| `stage_b_render_size.c` | **~40%** | Ladder shape OK; bucket assignments diverge from decompile; many `/* placeholder */` |
+| `stage_b_render_size.c` | **~75%** | Exact decompile ladder; bucket constants from f32 .rdata; `dVar3` table stubbed |
 | `stage_a_config_load.c` | **~25%** | Registry path pattern OK; ~50 values stubbed; resolution index remap incomplete |
-| `stage_c_apply_anchors.c` | **~15%** | Six loop *counts* correct; body is mostly comments + undefined symbols |
+| `stage_c_apply_anchors.c` | **~70%** | Full call order + table-driven loops; 494 engine pointers dumped; D3D/lang stubbed |
 | Detour handlers (4 files) | **~30%** | Right idea; missing includes, `undefined4`, incomplete call-through |
 | `ephinea_widescreen.h` | **~50%** | Good extern map; `static` helper in header; `undefined4` undeclared |
 | Detour installers | **0% → started here** | Now in `src/detour_installer.c` + `data/detour_installs.csv` |
