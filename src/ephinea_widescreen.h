@@ -100,20 +100,17 @@ void stage_c_apply_anchors(void);
 /* 92-VA — 97 arithmetic writes across 93 distinct VAs */
 void stage_c_92va_apply(void);
 
-/* Per-draw detour handlers */
+/* Per-draw detour handlers (params are engine calling-convention sized) */
 void vertex_aspect_correct_transform(int* vertexBuffer,
-                                     undefined4 param2,
-                                     undefined4 param3,
-                                     undefined4 param4);
-void ui_edge_reanchor(undefined4 param1, undefined4 param2);
+                                     uint32_t param2,
+                                     uint32_t param3,
+                                     uint32_t param4);
+void ui_edge_reanchor(uint32_t param1, uint32_t param2);
 void deanchor_pin(int* savedScale);
 
-/* ================================================================
- * 6. TOOL FUNCTIONS
- * ================================================================ */
-
-/* Helper for the many registry reads in Stage A */
-static void read_dword_reg(HKEY hKey, LPCWSTR valName, DWORD* out,
-                           DWORD minVal, DWORD maxVal, DWORD defaultVal);
+/* Detour installer family — see src/detour_installer.c */
+void eph_patch_nop_sled(uint8_t* site, int len);
+void eph_install_call_detour(void* handler, uint8_t* site, int patch_len);
+void eph_install_jmp_detour(void* handler, uint8_t* site, int patch_len);
 
 #endif /* EPHINEA_WIDESCREEN_H */

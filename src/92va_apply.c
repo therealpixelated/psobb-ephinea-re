@@ -23,6 +23,8 @@
 
 #include <stdint.h>
 
+void eph_patch_nop_sled(uint8_t *site, int len); /* FUN_52dc3460 */
+
 extern float gameRenderW;   /* _DAT_5318deec */
 extern float gameRenderH;   /* _DAT_5318d124 */
 extern float displayW;      /* _DAT_5318d210 */
@@ -217,5 +219,5 @@ void stage_c_92va_apply(void)
     /* Code patch: installs 11 bytes at 0x0040D305 via helper function.
      * This is a runtime detour/opcode patch in the engine's .text section.
      * See FUN_52dc3460 in the detour installer family. */
-    FUN_52dc3460(0x0040D305, 0xB);
+    eph_patch_nop_sled((uint8_t *)(uintptr_t)0x0040D305, 0xB);
 }
