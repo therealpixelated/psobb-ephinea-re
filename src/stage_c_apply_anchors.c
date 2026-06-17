@@ -2,305 +2,268 @@
  * ephinea.dll — Widescreen Cascade: Stage C
  * Original: FUN_52da7ff0 @ 0x52DA7FF0
  *
- * The REAL bulk anchor apply — writes ~700+ engine globals across six bulk
- * loops (~122/90/35/28/235/12 iterations) and ~80 scalar writes, THEN calls
- * the 92-VA function (FUN_52da9280) for an additional 97 arithmetic writes,
- * and continues writing after it returns.
- *
- * NOTE: This is NOT the "92-VA function". Prior documentation often conflates
- * the two. The 92-VA function is a *subset* called from here around line ~270.
- * A port that implements only the 92-VA function will be visibly wrong.
- *
- * See docs/PATCHES_OVERVIEW.md §2, §4 for the authoritative recipe.
+ * Recovered from reference/ephinea_decompiled_PRIORBUILD.c:131837-132122
+ * Pointer tables from data/stage_c_tables.h (current unpacked build).
  */
 
-#include <windows.h>
+#include "cascade_constants.h"
+#include "stage_c_tables.h"
+#include "engine_write.h"
+#include "ephinea_widescreen.h"
 #include <math.h>
+#include <stdint.h>
 
-/* ── Forward declarations ── */
-void stage_c_92va_apply(void);           /* FUN_52da9280 — the 97 arithmetic writes */
-void* alloc_engine_object(void);         /* FUN_52d46df0 */
-void enum_display_modes(void);           /* D3D9/DDraw mode enumeration */
-int  match_string_in_list(const char* list, const char* target); /* FUN_52d61a40 */
-void set_detour_status(int enabled);     /* FUN_52dc32e0 */
+void stage_c_92va_apply(void);
+void *alloc_engine_object(void);
+void  set_detour_status(int enabled);
 
-/* ── Engine globals (referenced by address) ── */
-extern float  gameRenderW;     /* _DAT_5318deec */
-extern float  gameRenderH;     /* _DAT_5318d124 */
-extern float  displayW;        /* _DAT_5318d210 */
-extern float  displayH;        /* _DAT_5318dcdc */
-extern float  hudScaleFactor;  /* _DAT_5387b918 = S */
-extern float  g_5318f038;      /* _DAT_5318f038 = aspectMult */
-extern float  g_5318d21c;      /* _DAT_5318d21c (from Stage B bucket) */
-extern float  g_5318da7c;      /* _DAT_5318da7c (from Stage B bucket) */
-extern float  g_5318ee38;      /* _DAT_5318ee38 (from Stage B) */
-extern float  g_5318efa4;      /* _DAT_5318efa4 (from Stage B) */
-extern int    g_numPlayers;    /* _DAT_53a9027c */
-extern int    g_languageId;    /* _DAT_5388ed90 */
+extern float gameRenderW;
+extern float gameRenderH;
+extern float displayW;
+extern float displayH;
+extern float hudScaleFactor;
+extern float g_5318f038;
+extern float g_5318d21c;
+extern float g_5318da7c;
+extern float g_5318ee38;
+extern float g_5318efa4;
+extern int   g_numPlayers;
+extern int   g_languageId;
 
-/* Base constants (RPM-only, structure verified per PATCHES_OVERVIEW §2) */
-#define STOCK_WIDTH      640.0f    /* _DAT_53176128 */
-#define STOCK_HEIGHT     480.0f    /* _DAT_53176120 */
-#define HALF             2.0f      /* _DAT_53175f20 */
-#define ONE              1.0f      /* _DAT_53175e64 */
-#define ZERO             0.0f      /* _DAT_531760bc (used as zero sentinel) */
+/* Layout scalars (f32 reads from prior .rdata — current build) */
+#define C_A4    14.0f
+#define C_9C    10.9073f
+#define C_104   128.0f
+#define C_100   110.0f
+#define C_124   210.0f
+#define C_B8    21.0f
+#define C_D4    44.0f
+#define C_FD8   14.0f
+#define C_A0    12.0f
+#define C_D0    40.0f
+#define C_F8    93.0f
+#define C_F0    80.0f
+#define C_C4    32.0f
+#define C_E4    61.0f
+#define C_118   157.0f
+#define C_128   EPH_STOCK_WIDTH
+#define C_048   5.333333f
+#define C_150   330.0f
+#define C_140   288.0f
+#define C_144   300.0f
+#define C_190   22937.6f
+#define C_B4    20.0f
+#define C_110   144.0f
+#define C_074   7.0f
+#define C_088   8.0f
+#define C_104B  128.0f
+#define C_E28   1.0f   /* _DAT_53175e28 — stub */
+#define C_040   3276.8f
 
-/* ── Bulk loop anchor address ranges ──
- *
- * Each loop iterates over an array of float pointers in the engine .data
- * section and writes the same computed value.
- *
- * Loop 1: 122 VAs at [0x5318F040]  ← gameRenderW
- * Loop 2:  90 VAs at [0x5318E6E0]  ← gameRenderH
- * Loop 3:  35 VAs at [0x5318E650]  += (gameRenderW - 640) / 2
- * Loop 4:  28 VAs at [0x5318F2A0]  += (gameRenderW - 640)
- * Loop 5: 235 VAs at [0x5318E9C8]  += (gameRenderH - 480)
- * Loop 6:  12 VAs at [0x5318EF00]  += (gameRenderH/2 - offset)
- *
- * Each [_DAT_5318xxxx] is a POINTER TO a float in PsoBB.exe's data section.
- * The loop writes *ptr = value for each entry (or += for loops 3-6).
- */
+static float eph_norm_scale(float derived)
+{
+    /* ((_DAT_5318ee38 - ZERO) / ZERO + ONE) pattern — ZERO is identity pivot */
+    return ((derived - EPH_ONE) / EPH_ONE + EPH_ONE);
+}
 
-/* Anchor table bases (RVA in engine .data) */
-#define ANCHOR_W          0x5318F040   /* 122 entries, gameRenderW */
-#define ANCHOR_H          0x5318E6E0   /* 90 entries, gameRenderH */
-#define ANCHOR_WADD_HALF  0x5318E650   /* 35 entries, += (W-640)/2 */
-#define ANCHOR_WADD_FULL  0x5318F2A0   /* 28 entries, += (W-640) */
-#define ANCHOR_HADD_FULL  0x5318E9C8   /* 235 entries, += (H-480) */
-#define ANCHOR_HADD_HALF  0x5318EF00   /* 12 entries, += (H/2 - offset) */
-#define ANCHOR_SCALE_W    0x5318F00C   /* 2 entries, *= (W/640) */
-#define ANCHOR_SCALE_H    0x5318EF40   /* 20 entries, *= (H/480) */
-#define ANCHOR_USHORT_H   0x5318E8FC   /* 12 entries, ushort*H */
+static float eph_round_like_dll(float x)
+{
+    return nearbyintf(x);
+}
 
-/* ── Per-player scaling (multiplayer UI adjustments) ── */
-#define MAX_PLAYERS       4
+static void eph_write_tbl_f32(const uint32_t *tbl, int count, float value, int additive)
+{
+    int i;
+    for (i = 0; i < count; i++) {
+        uint32_t va = tbl[i];
+        if (!eph_is_engine_va(va))
+            continue;
+        if (additive)
+            *eph_engine_f32(va) += value;
+        else
+            *eph_engine_f32(va) = value;
+    }
+}
 
-
-/*
- * stage_c_apply_anchors — Main widescreen anchor apply.
- *
- * Call order (verified from decompile):
- *   1. 12 PRNG/allocator calls (2×6 + 24 more — likely UI object creation)
- *   2. ~40 scalar writes (geometry derivations from gameRenderW/H)
- *   3. 12× aspectMult = g_5318f038
- *   4. Bucket constants → display
- *   5. 6 bulk loops (122/90/35/28/235/12 iterations)
- *   6. 2× W/H proportional scale (func_0x524b7cb0 = sqrt or lerp?)
- *   7. 20× H proportional scale
- *   8. 12× ushort H-scale
- *   9. ~10 color constant writes (0xff181818 alpha values)
- *  10. ~6 geometric recomputation (mix of gameRenderW/H derived)
- *  11. Per-player UI scaling (if g_numPlayers > n)
- *  12. Display-mode enumeration + language ID check
- *  13. Detour status set
- *  14. Clamp value computation
- *  15. *** CALLS FUN_52da9280 (92-VA) ***
- *  16. ~25 final scalar writes
- *  17. 6-element function pointer array setup
- *  18. Final increment write
- */
 void stage_c_apply_anchors(void)
 {
     int i;
-    float temp;
+    float halfW = gameRenderW / EPH_HALF;
+    float halfH = gameRenderH / EPH_HALF;
+    float wDeltaHalf = (gameRenderW - EPH_STOCK_WIDTH) / EPH_HALF;
+    float wDeltaFull = (gameRenderW - EPH_STOCK_WIDTH);
+    float hDeltaFull = (gameRenderH - EPH_STOCK_HEIGHT);
+    float hDeltaHalf = halfH - C_E4; /* renderH/2 - _DAT_531760e4 */
 
-    /* ── 1. Allocate 12 engine objects (2×6 batches) ──
-     * These are likely UI widget/heap objects created for the widescreen
-     * viewport. Each call to FUN_52d46df0 returns a handle/pointer. */
-    for (i = 0; i < 6; i++) {
-        *(void**)anchor_table_6[i] = alloc_engine_object();
-    }
-    for (i = 0; i < 6; i++) {
-        *(void**)anchor_table_6b[i] = alloc_engine_object();
-    }
+    /* Allocator batches — results stored in dll-side pointer tables (skipped here) */
+    for (i = 0; i < 6; i++)
+        (void)alloc_engine_object();
+    for (i = 0; i < 6; i++)
+        (void)alloc_engine_object();
+    for (i = 0; i < 24; i++)
+        (void)alloc_engine_object();
 
-    /* 24 more individual allocs (see raw decompile for exact _DAT_009a3xxx list) */
-    g_009a3840 = alloc_engine_object();
-    g_009a3844 = alloc_engine_object();
-    /* ... (24 more) ... */
-    g_009a38d8 = alloc_engine_object();
+    /* Scalar geometry derivations (decompile lines 131912-131953) */
+    *eph_engine_f32(0x006F4CF2) = eph_norm_scale(g_5318ee38) * C_A4;
+    *eph_engine_f32(0x006F4CFA) = eph_norm_scale(g_5318efa4) * C_9C;
+    *eph_engine_f32(0x006F4D02) = eph_norm_scale(g_5318ee38) * C_104B;
+    *eph_engine_f32(0x006F4D0A) = eph_norm_scale(g_5318efa4) * C_100;
+    *eph_engine_f32(0x006F4D4E) = eph_norm_scale(g_5318ee38) * C_104B;
+    *eph_engine_f32(0x006F4D56) = eph_norm_scale(g_5318efa4) * C_9C;
+    *eph_engine_f32(0x006F4D5E) = eph_norm_scale(g_5318ee38) * C_124;
+    *eph_engine_f32(0x006F4D66) = eph_norm_scale(g_5318efa4) * C_100;
 
-    /* ── 2. Scalar geometry derivations (~40 writes) ──
-     *
-     * Pattern: many writes take the form:
-     *   ((g_5318ee38 - ZERO) / ZERO + ONE) * someConstant
-     *
-     * Where g_5318ee38 and g_5318efa4 were computed in Stage B from
-     * func_0x524b7c70 calls (likely sqrt or round). The (x-ZERO)/ZERO+ONE
-     * pattern is a normalization — if func_0x524b7c70 is sqrt, then this
-     * computes a ratio relative to the stock value.
-     *
-     * See intermediate/stage_c_raw.c lines ~50-130 for the full list.
-     */
+    *eph_engine_f32(0x009D0040) = halfW - EPH_ONE;
+    *eph_engine_f32(0x00761CCC) = halfW - C_B8;
+    *eph_engine_f32(0x00761CDE) = halfW - C_B8;
+    *eph_engine_f32(0x0076236C) = halfW - C_D4;
+    *eph_engine_f32(0x007625F8) = halfW - C_FD8;
+    *eph_engine_f32(0x007627CF) = halfW - C_FD8;
+    *eph_engine_f32(0x008F87D4) = gameRenderW - C_A0;
+    *eph_engine_f32(0x008F87E4) = gameRenderW - C_A0;
+    *eph_engine_f32(0x009F0ADC) = gameRenderW - C_D0;
+    *eph_engine_f32(0x009F0AF4) = gameRenderW - C_F8;
+    *eph_engine_f32(0x009F0B0C) = gameRenderW - C_D0;
+    *eph_engine_f32(0x009F0B24) = gameRenderW - C_F8;
+    *eph_engine_f32(0x009F0B3C) = gameRenderW - EPH_ONE;
+    *eph_engine_f32(0x0070D350) = gameRenderW - C_118;
+    *eph_engine_f32(0x009F0B5C) = gameRenderW - EPH_ONE;
+    *eph_engine_f32(0x0070D2F6) = gameRenderW - C_118;
+    *eph_engine_f32(0x009FF080) = gameRenderW - C_C4;
+    *eph_engine_f32(0x009FF098) = gameRenderW - C_C4;
+    *eph_engine_f32(0x009FF0B0) = gameRenderW - EPH_ONE;
+    *eph_engine_f32(0x009FF0C8) = gameRenderW - EPH_ONE;
+    *eph_engine_f32(0x009FF0E0) = gameRenderW - C_F0;
+    *eph_engine_f32(0x009FF0F8) = gameRenderW - C_F0;
+    *eph_engine_f32(0x009FF110) = gameRenderW - C_C4;
+    *eph_engine_f32(0x009FF128) = gameRenderW - C_C4;
+    *eph_engine_f32(0x009FF1A8) = gameRenderW - C_C4;
+    *eph_engine_f32(0x006F4922) = halfW;
+    *eph_engine_f32(0x006F4936) = halfH;
+    *eph_engine_f32(0x0096F2B8) = gameRenderW - C_E4;
+    *eph_engine_f32(0x007584EE) = gameRenderW + C_048;
+    *eph_engine_f32(0x0075851F) = gameRenderW + C_048;
+    *eph_engine_f32(0x00978454) = gameRenderW - EPH_STOCK_WIDTH;
+    *eph_engine_f32(0x00978458) = (gameRenderW - EPH_STOCK_WIDTH) + (-9.53675e-07f);
+    *eph_engine_f32(0x009712EC) = gameRenderH;
+    *eph_engine_f32(0x007165B8) = gameRenderW - EPH_ONE;
 
-    /* ── 3. 12× aspectMult writes ── */
-    for (i = 0; i < 12; i++) {
-        *(float**)ANCHOR_ASPECTTABLE[i] = g_5318f038;  /* _DAT_5318ee3c + i*4 */
-    }
-
-    /* ── 4. Bucket constants → display ── */
-    g_0098a320 = g_5318d21c;   /* _DAT_0098a320 */
-    g_0098a324 = g_5318da7c;   /* _DAT_0098a324 */
-
-    /* ── 5. Six bulk loops ── */
-    for (i = 0; i < 122; i++)  /* 0x7a */
-        **(float**)(ANCHOR_W + i*4) = gameRenderW;
-
-    for (i = 0; i < 90; i++)   /* 0x5a */
-        **(float**)(ANCHOR_H + i*4) = gameRenderH;
-
-    for (i = 0; i < 35; i++)   /* 0x23 */
-        **(float**)(ANCHOR_WADD_HALF + i*4) += (gameRenderW - STOCK_WIDTH) / HALF;
-
-    for (i = 0; i < 28; i++)   /* 0x1c */
-        **(float**)(ANCHOR_WADD_FULL + i*4) += (gameRenderW - STOCK_WIDTH);
-
-    for (i = 0; i < 235; i++)  /* 0xeb */
-        **(float**)(ANCHOR_HADD_FULL + i*4) += (gameRenderH - STOCK_HEIGHT);
-
-    for (i = 0; i < 12; i++)   /* 0xc */
-        **(float**)(ANCHOR_HADD_HALF + i*4) += (gameRenderH / HALF - /* offset */ ZERO);
-
-    /* ── 6. W/H proportional scale (2 entries) ──
-     * func_0x524b7cb0 is likely a rounding/truncation function */
-    for (i = 0; i < 2; i++) {
-        float ratio = (**(float**)(ANCHOR_SCALE_W + i*4)) / STOCK_WIDTH;
-        **(float**)(ANCHOR_SCALE_W + i*4) = round_func(ratio * gameRenderW);
-    }
-
-    /* ── 7. H proportional scale (20 entries) ── */
-    for (i = 0; i < 20; i++) {
-        float ratio = (**(float**)(ANCHOR_SCALE_H + i*4)) / STOCK_HEIGHT;
-        **(float**)(ANCHOR_SCALE_H + i*4) = round_func(ratio * gameRenderH);
+    /* 12× aspectMult pointer writes */
+    for (i = 0; i < kAspectMultPtr_COUNT; i++) {
+        uint32_t va = kAspectMultPtr[i];
+        if (eph_is_engine_va(va))
+            *eph_engine_f32(va) = g_5318f038;
     }
 
-    /* ── 8. ushort H-scale (12 entries) ── */
-    for (i = 0; i < 12; i++) {
-        float scaled = (float)(**(ushort**)(ANCHOR_USHORT_H + i*4)) * /* _53175e04 */ 1.0f * gameRenderH;
-        **(ushort**)(ANCHOR_USHORT_H + i*4) = float_to_ushort(scaled);
+    *eph_engine_f32(0x0098A320) = g_5318d21c;
+    *eph_engine_f32(0x0098A324) = g_5318da7c;
+
+    /* Six bulk loops */
+    eph_write_tbl_f32(kAnchorW, kAnchorW_COUNT, gameRenderW, 0);
+    eph_write_tbl_f32(kAnchorH, kAnchorH_COUNT, gameRenderH, 0);
+    eph_write_tbl_f32(kAnchorWaddHalf, kAnchorWaddHalf_COUNT, wDeltaHalf, 1);
+    eph_write_tbl_f32(kAnchorWaddFull, kAnchorWaddFull_COUNT, wDeltaFull, 1);
+    eph_write_tbl_f32(kAnchorHaddFull, kAnchorHaddFull_COUNT, hDeltaFull, 1);
+    eph_write_tbl_f32(kAnchorHaddHalf, kAnchorHaddHalf_COUNT, hDeltaHalf, 1);
+
+    for (i = 0; i < kScaleW_COUNT; i++) {
+        uint32_t va = kScaleW[i];
+        if (!eph_is_engine_va(va)) continue;
+        float ratio = *eph_engine_f32(va) / EPH_STOCK_WIDTH;
+        *eph_engine_f32(va) = eph_round_like_dll(ratio * gameRenderW);
+    }
+    for (i = 0; i < kScaleH_COUNT; i++) {
+        uint32_t va = kScaleH[i];
+        if (!eph_is_engine_va(va)) continue;
+        float ratio = *eph_engine_f32(va) / EPH_STOCK_HEIGHT;
+        *eph_engine_f32(va) = eph_round_like_dll(ratio * gameRenderH);
     }
 
-    /* ── 9. Color constants ── */
-    g_009b8db4 = 0xff181818;
-    g_009b8dc0 = 0xff181818;
-    g_009b8db8 = 0xfa181818;
-    g_009b8dbc = 0xfa181818;
-    g_009b8de8 = 0xfa181818;
-    g_009b8dec = 0xfa181818;
-
-    /* ── 10. Geometric recomputation (~6 writes) ──
-     * Mix of gameRenderW/H derived values with the normalization factor. */
-    g_009ca53c = gameRenderW / HALF
-               - (/* _53176104 */ - g_009ca53c)
-               * ((g_5318efa4 - ZERO) / ZERO + ONE);
-    /* ... (5 more, same pattern) ... */
-
-    /* ── 11. Per-player UI scaling ── */
-    if (g_numPlayers > 1) {
-        g_00927318 = /* _53176150 */;    /* 2-player threshold */
+    /* ushort H-scale loop — engine ushort targets only */
+    for (i = 0; i < kUshortH_COUNT; i++) {
+        uint32_t va = kUshortH[i];
+        if (!eph_is_engine_va(va)) continue;
+        float scaled = (float)*eph_engine_u16(va) * C_E28 * gameRenderH;
+        *eph_engine_u16(va) = (uint16_t)eph_round_like_dll(scaled);
     }
+
+    *eph_engine_u32(0x009B8DB4) = 0xFF181818u;
+    *eph_engine_u32(0x009B8DC0) = 0xFF181818u;
+    *eph_engine_u32(0x009B8DB8) = 0xFA181818u;
+    *eph_engine_u32(0x009B8DBC) = 0xFA181818u;
+    *eph_engine_u32(0x009B8DE8) = 0xFA181818u;
+    *eph_engine_u32(0x009B8DEC) = 0xFA181818u;
+
+    /* Geometric recomputation (6 writes) */
+    *eph_engine_f32(0x009CA53C) = halfW - (C_104 - *eph_engine_f32(0x009CA53C)) * eph_norm_scale(g_5318efa4);
+    *eph_engine_f32(0x009CA544) = halfW - (C_104 - *eph_engine_f32(0x009CA544)) * eph_norm_scale(g_5318efa4);
+    *eph_engine_f32(0x009CA54C) = halfW - (C_104 - *eph_engine_f32(0x009CA54C)) * eph_norm_scale(g_5318efa4);
+    *eph_engine_f32(0x009CA554) = halfW - (C_104 - *eph_engine_f32(0x009CA554)) * eph_norm_scale(g_5318efa4);
+    *eph_engine_f32(0x0093B8AC) = halfH - (C_E4 - *eph_engine_f32(0x0093B8AC)) * eph_norm_scale(g_5318efa4);
+    *eph_engine_f32(0x0093B8A8) = halfH - (C_E4 - *eph_engine_f32(0x0093B8A8)) * eph_norm_scale(g_5318efa4);
+
+    if (g_numPlayers > 1)
+        *eph_engine_f32(0x00927318) = C_150;
     if (g_numPlayers > 2) {
-        g_5318e8ec = /* _53175e28 */;
-        for (i = 0; i < g_numPlayers - 2; i++) {
-            g_5318e8ec = ((float)(i) / /* _53176040 */ + ONE) * g_5318e8ec;
+        float factor = C_E28;
+        for (i = 0; i < g_numPlayers - 2; i++)
+            factor = ((float)i / C_040 + EPH_ONE) * factor;
+        factor = (float)(g_numPlayers - 2) * factor + EPH_ONE;
+        for (i = 0; i < kPlayerScale_COUNT; i++) {
+            uint32_t va = kPlayerScale[i];
+            if (eph_is_engine_va(va))
+                *eph_engine_f32(va) *= factor;
         }
-        g_5318e8ec = (float)(g_numPlayers - 2) * g_5318e8ec + ONE;
-
-        /* Scale 5 entries by the per-player factor */
-        for (i = 0; i < 5; i++)
-            **(float**)(ANCHOR_PLAYERSCALE + i*4) *= g_5318e8ec;
-
-        /* Update HUD position offsets */
-        g_0097f1bc += (float)(g_numPlayers - 2);
-        g_0090235c -= (float)(g_numPlayers - 2);
-        g_00902358 += (float)(g_numPlayers - 2);
+        *eph_engine_f32(0x0097F1BC) += (float)(g_numPlayers - 2);
+        *eph_engine_f32(0x0090235C) -= (float)(g_numPlayers - 2);
+        *eph_engine_f32(0x00902358) += (float)(g_numPlayers - 2);
     }
 
-    /* ── 12-13. Display-mode enumeration + language ID ── */
-    {
-        int found = 0;
-        unsigned int count, buffer;
-        /* Enumerate display modes via D3D9/DDraw */
-        count = (*d3d9_enumfunc)(0, 0);
-        buffer = (*d3d9_createfunc)(0x40, count << 2);
-        count = (*d3d9_enumfunc)(count, buffer);
-        for (i = 0; i < count; i++) {
-            char name[0x200];
-            (*d3d9_getdesc)(*(uint16*)(buffer + i*4), 0x1001, name, 0x200);
-            if (match_string_in_list(name, 0x53140048)) {
-                found = 1;
-            }
-            memset(name, 0, 0x200);
-        }
-        if (g_languageId == 1 && found == 0) {
-            g_languageId = 0;
-        }
-        if (buffer) {
-            (*d3d9_freefunc)(buffer);
-        }
-        if (g_languageId == 0) {
-            g_00841386 = 0x8ec39c;   /* Pointer to default string table */
-        } else {
-            void* h = (*d3d9_loadfunc)(0x53140054, 0x101, 0);
-            (*d3d9_bindfunc)(h);
-            g_00841386 = 0x8f83a8;   /* Pointer to localized string table */
-        }
-    }
+    *eph_engine_f32(0x008FB114) = halfW;
+    *eph_engine_f32(0x008FB110) = halfH;
+    *eph_engine_f32(0x008FB10C) /= hudScaleFactor;
 
-    /* ── 14. Detour status ── */
+    /* Language / display-mode block stubbed — see decompile 132057-132083 */
+    (void)g_languageId;
     set_detour_status(1);
 
-    /* ── 15. Clamp value ── */
-    if (/* _53176140 */ <= /* _53176144 */ / hudScaleFactor) {
-        g_00a11464 = /* _53176140 */;
-    } else {
-        g_00a11464 = /* _53176144 */ / hudScaleFactor;
-    }
+    if (C_140 <= C_144 / hudScaleFactor)
+        *eph_engine_f32(0x00A11464) = C_140;
+    else
+        *eph_engine_f32(0x00A11464) = C_144 / hudScaleFactor;
 
-    /* ── 16. *** THE 92-VA FUNCTION *** ── */
     stage_c_92va_apply();
 
-    /* ── 17. Final scalar writes (~25) ──
-     * Texture-coord / screen-edge updates for the new viewport size */
-    g_0077f2d1 = /* _53176190 */;         /* _DAT_0077f2d1 */
-    g_0077f32c = /* _53176190 */;
-    g_0077f362 = /* _53176190 */;
-    g_0077f3c7 = /* _53176190 */;
-    g_0077f2ed = gameRenderW + /* _53175e44 */;  /* right edge */
-    g_0077f30d = gameRenderW + /* _53175e44 */;
-    g_0077f386 = gameRenderW + /* _53175e44 */;
-    g_0077f3a7 = gameRenderW + /* _53175e44 */;
-    g_0077f3b2 = gameRenderH + /* _53175e44 */;  /* bottom edge */
-    g_0077f3d2 = gameRenderH + /* _53175e44 */;
+    /* Post-92-VA writes (decompile 132093-132121) */
+    *eph_engine_f32(0x0077F2D1) = C_190;
+    *eph_engine_f32(0x0077F32C) = C_190;
+    *eph_engine_f32(0x0077F362) = C_190;
+    *eph_engine_f32(0x0077F3C7) = C_190;
+    *eph_engine_f32(0x0077F2ED) = gameRenderW + C_074;
+    *eph_engine_f32(0x0077F30D) = gameRenderW + C_074;
+    *eph_engine_f32(0x0077F386) = gameRenderW + C_074;
+    *eph_engine_f32(0x0077F3A7) = gameRenderW + C_074;
+    *eph_engine_f32(0x0077F3B2) = gameRenderH + C_074;
+    *eph_engine_f32(0x0077F3D2) = gameRenderH + C_074;
+    *eph_engine_f32(0x0091FF30) = displayW + C_B4;
+    *eph_engine_f32(0x0091FF2C) = displayH + C_B4;
+    *eph_engine_f32(0x0091FF00) = displayW + C_B4;
+    *eph_engine_f32(0x0091FEFC) = displayH + C_B4;
+    *eph_engine_f32(0x00973138) = C_190;
+    *eph_engine_f32(0x00973134) = C_190;
+    *eph_engine_f32(0x00973130) += C_074;
+    *eph_engine_f32(0x0097312C) += C_074;
+    *eph_engine_f32(0x009F4654) = C_110;
 
-    /* Display-frame offset (screen-space safe zone) */
-    g_0091ff30 = displayW + /* _531760b4 */;
-    g_0091ff2c = displayH + /* _531760b4 */;
-    g_0091ff00 = displayW + /* _531760b4 */;
-    g_0091fefc = displayH + /* _531760b4 */;
-
-    /* More texture-edge writes */
-    g_00973138 = /* _53176190 */;
-    g_00973134 = /* _53176190 */;
-    g_00973130 += /* _53175e44 */;
-    g_0097312c += /* _53175e44 */;
-    g_009f4654 = /* _53176110 */;
-
-    /* ── 18. 6-element function pointer array (column offsets) ── */
     {
-        float* ptrs[6] = {
-            (float*)0x9f4564,
-            (float*)0x9f4594,
-            (float*)0x9f45c4,
-            (float*)0x9f45f4,
-            (float*)0x9f4624,
-            (float*)0x9f4654,
+        float *cols[6] = {
+            eph_engine_f32(0x009F4564), eph_engine_f32(0x009F4594),
+            eph_engine_f32(0x009F45C4), eph_engine_f32(0x009F45F4),
+            eph_engine_f32(0x009F4624), eph_engine_f32(0x009F4654),
         };
-        for (i = 0; i < 6; i++) {
-            *ptrs[i] = (float)i * /* _531760a4 */ + /* _53176074 */;
-        }
+        for (i = 0; i < 6; i++)
+            *cols[i] = (float)i * C_A4 + C_074;
     }
 
-    /* ── 19. Final increment ── */
-    g_0096ffdc += /* _53176088 */;
+    *eph_engine_f32(0x0096FFDC) += C_088;
 }

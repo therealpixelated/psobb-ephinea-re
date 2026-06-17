@@ -22,6 +22,7 @@
  */
 
 #include <stdint.h>
+#include "cascade_constants.h"
 
 void eph_patch_nop_sled(uint8_t *site, int len); /* FUN_52dc3460 */
 
@@ -29,10 +30,6 @@ extern float gameRenderW;   /* _DAT_5318deec */
 extern float gameRenderH;   /* _DAT_5318d124 */
 extern float displayW;      /* _DAT_5318d210 */
 extern float displayH;      /* _DAT_5318dcdc */
-
-#define STOCK_WIDTH  640.0f
-#define STOCK_HEIGHT 480.0f
-#define HALF          2.0f
 
 /* Pointer helper: read/write a float at a given absolute VA */
 #define PTR(va)       ((float*)(va))
@@ -52,12 +49,12 @@ extern float displayH;      /* _DAT_5318dcdc */
  */
 void stage_c_92va_apply(void)
 {
-    float w_factor  = gameRenderW / STOCK_WIDTH;   /* width multiplier */
-    float h_factor  = gameRenderH / STOCK_HEIGHT;  /* height multiplier */
-    float w_delta   = (gameRenderW - STOCK_WIDTH);  /* raw width delta */
-    float h_delta   = (gameRenderH - STOCK_HEIGHT); /* raw height delta */
-    float w_add     = w_delta / HALF;               /* half-width delta (letterbox) */
-    float h_add     = h_delta / HALF;               /* half-height delta (letterbox) */
+    float w_factor  = gameRenderW / EPH_STOCK_WIDTH;
+    float h_factor  = gameRenderH / EPH_STOCK_HEIGHT;
+    float w_delta   = (gameRenderW - EPH_STOCK_WIDTH);
+    float h_delta   = (gameRenderH - EPH_STOCK_HEIGHT);
+    float w_add     = w_delta / EPH_HALF;
+    float h_add     = h_delta / EPH_HALF;
 
     /* ───── L1 — W-mul (23 VAs): *val *= (gameRenderW / 640) ───── */
 
@@ -196,13 +193,13 @@ void stage_c_92va_apply(void)
     *PTR(0x008FA1C0) *= (displayW / gameRenderW);  /* inline[5] (also L1 dual-listed) */
 
     /* DLL-internal scratch */
-    *PTR(0x5318E980) *= (displayW / STOCK_WIDTH);  /* inline[6] */
+    *PTR(0x5318E980) *= (displayW / EPH_STOCK_WIDTH);  /* inline[6] */
 
     /* Engine .text imm32 */
     *PTR(0x0040D039) *= (displayH / gameRenderH);  /* inline[7] */
 
     /* Special formula: val = (displayH/renderH)*(val - 480) + displayH */
-    *PTR(0x0040D032) = (displayH / gameRenderH) * (*PTR(0x0040D032) - STOCK_HEIGHT) + displayH;
+    *PTR(0x0040D032) = (displayH / gameRenderH) * (*PTR(0x0040D032) - EPH_STOCK_HEIGHT) + displayH;
 
     /* Special formula: val = (displayW/renderW)*((renderW-640)/2 + val) */
     *PTR(0x0040D1DD) = (displayW / gameRenderW) * (w_add + *PTR(0x0040D1DD));
