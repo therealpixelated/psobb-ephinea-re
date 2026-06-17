@@ -8,6 +8,7 @@
 #include "cascade_constants.h"
 #include "ephinea_widescreen.h"
 #include <math.h>
+#include <stdint.h>
 
 extern float displayW;
 extern float displayH;
@@ -20,8 +21,9 @@ extern float g_5318da7c;
 extern float g_5318efa4;
 extern float g_5318ee38;
 
-extern int   g_widescreenEnabled; /* _DAT_53857a5c */
-extern float hudScalePercent;     /* _DAT_5382fe9c */
+extern int   widescreenEnabled;     /* _DAT_53857a5c */
+extern float hudScalePercent;       /* _DAT_5382fe9c */
+extern int   g_hudScaleIndex;       /* _DAT_5388f9c0 */
 
 extern float g_0097a910;
 extern float g_0096e114;
@@ -52,12 +54,6 @@ extern float g_0096e17c;
 #define B_E8C   EPH_ASPECT_4_3
 #define B_E78   1.333333f
 
-static float eph_table_lookup(int idx)
-{
-    (void)idx;
-    return 1.0f; /* DAT_531761e0[] — TODO: dump from current .rdata */
-}
-
 static float eph_round_like_dll(float x)
 {
     return nearbyintf(x);
@@ -69,7 +65,6 @@ void stage_b_compute_render_size(void)
     float S;
     float aspectMult;
     double dVar3;
-    int idx = 0;
 
     if (aspect >= (float)kAspectBreakpoints[0]) {
         if (aspect >= (float)kAspectBreakpoints[1]) {
@@ -111,16 +106,16 @@ void stage_b_compute_render_size(void)
 
     g_5318f038 = aspectMult;
 
-    if (!g_widescreenEnabled) {
+    if (!widescreenEnabled) {
         S = EPH_ONE;
         dVar3 = (double)(displayH / EPH_STOCK_HEIGHT) * 0.4 *
-                ((double)idx + (double)eph_table_lookup(idx));
+                (eph_i32_to_f64((int32_t)g_hudScaleIndex) + 1.0);
     } else {
         if (hudScalePercent != 0.0f) {
-            S = (hudScalePercent + eph_table_lookup(idx)) / EPH_HUNDRED;
+            S = (hudScalePercent + 1.0f) / EPH_HUNDRED;
         }
         dVar3 = ((double)displayH / ((double)S * 10.0)) * 0.4 *
-                ((double)idx + (double)eph_table_lookup(idx));
+                (eph_i32_to_f64((int32_t)g_hudScaleIndex) + 1.0f);
     }
 
     g_0097a910 = (float)(dVar3 / EPH_HUNDRED);

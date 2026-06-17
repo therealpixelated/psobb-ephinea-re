@@ -88,6 +88,8 @@ def emit_constants(data: bytes) -> str:
         "#ifndef CASCADE_CONSTANTS_H",
         "#define CASCADE_CONSTANTS_H",
         "",
+        "#include <stdint.h>",
+        "",
         "/* Verified stock scalars (current unpacked build) */",
     ]
     for name, (rva, kind, _) in VERIFIED.items():
@@ -110,6 +112,19 @@ def emit_constants(data: bytes) -> str:
         comma = "," if i < 6 else ""
         lines.append(f"    {d:.17g}{comma}  /* prior 0x{prior:08X} */")
     lines.append("};")
+    lines.append("")
+    lines.append("/* MSVC/Ghidra signed-i32 → f64 bias pair @ prior 0x531761E0 */")
+    rv_pos = prior_rva(0x531761E0)
+    rv_neg = prior_rva(0x531761E8)
+    pos = struct.unpack_from("<d", data, rv_pos)[0]
+    neg = struct.unpack_from("<d", data, rv_neg)[0]
+    lines.append(f"#define EPH_I32_TO_F64_POS {pos:.17g}")
+    lines.append(f"#define EPH_I32_TO_F64_NEG {neg:.17g}")
+    lines.append("")
+    lines.append("static inline double eph_i32_to_f64(int32_t v)")
+    lines.append("{")
+    lines.append("    return (double)v + (v < 0 ? EPH_I32_TO_F64_NEG : EPH_I32_TO_F64_POS);")
+    lines.append("}")
     lines.append("")
     lines.append("#endif /* CASCADE_CONSTANTS_H */")
     lines.append("")

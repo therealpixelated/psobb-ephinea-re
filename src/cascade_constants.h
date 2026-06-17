@@ -2,6 +2,8 @@
 #ifndef CASCADE_CONSTANTS_H
 #define CASCADE_CONSTANTS_H
 
+#include <stdint.h>
+
 /* Verified stock scalars (current unpacked build) */
 #define EPH_STOCK_WIDTH 640f
 #define EPH_STOCK_HEIGHT 480f
@@ -20,5 +22,14 @@ static const double kAspectBreakpoints[7] = {
     1.3999999999999999,  /* prior 0x53175F40 */
     1.5  /* prior 0x53175F50 */
 };
+
+/* MSVC/Ghidra signed-i32 → f64 bias pair @ prior 0x531761E0 */
+#define EPH_I32_TO_F64_POS -0.001562501067382982
+#define EPH_I32_TO_F64_NEG 1.5873523201947252e-314
+
+static inline double eph_i32_to_f64(int32_t v)
+{
+    return (double)v + (v < 0 ? EPH_I32_TO_F64_NEG : EPH_I32_TO_F64_POS);
+}
 
 #endif /* CASCADE_CONSTANTS_H */
