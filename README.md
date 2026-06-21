@@ -34,9 +34,29 @@ start immediately.
 The end state is a complete, annotated C reconstruction of what Ephinea does to the
 stock client.
 
+## ✅ Status — full hook enumeration done (2026-06-20)
+
+**[`EPHINEA_HOOKS_FULL_RE.md`](EPHINEA_HOOKS_FULL_RE.md)** is the completed objective #3+#4:
+a static reverse-engineering of **956 distinct hooks** Ephinea installs into `PsoBB.exe`
+(build 59NL / MTethVer12513), each named, classified by subsystem, and cross-referenced
+against the stock client. It covers the full 3-stage widescreen cascade + the 4 per-draw
+detours, every byte-delta patch, a completeness audit, and adversarial verification of
+every widescreen-relevant finding (130 confirmed / 162 revised / 46 refuted).
+
+Supporting data in [`hooks_re/`](hooks_re/):
+- [`hook_inventory_table.md`](hooks_re/hook_inventory_table.md) — the full 956-hook table grouped by subsystem (with a `verify` verdict column).
+- [`cascade_deepdives.md`](hooks_re/cascade_deepdives.md) — deep-dives of the 8 load-bearing widescreen functions.
+- [`data/`](hooks_re/data/) — raw inputs/outputs: the detour list, the stock-vs-Ephinea-vs-ours byte delta CSV, cascade specs, the completeness critic, and the adversarial verdicts.
+
+Built statically from the artifacts in this repo (no live process). Caveat: the `_DAT_5317xxxx`
+constant pool lives in the packer-relocated `.rdata`, so formula *structure* is verified but a
+handful of literal float values are triangulated, not byte-read — flagged in the doc's §6.
+
 ## What's in the repo
 
 ```
+EPHINEA_HOOKS_FULL_RE.md          # ⭐ the completed hook RE (objective #3/#4)
+hooks_re/                         # supporting tables, deep-dives, raw data
 ephinea.dll                       # the PACKED original (current build)
 unpacked/
   ephinea_unpacked_*.bin          # fully UNPACKED runtime image (base 0x78480000)
