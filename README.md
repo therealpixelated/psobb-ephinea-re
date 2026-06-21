@@ -64,6 +64,20 @@ unpacked/
 docs/
   PACKER.md                       # static analysis of the .banana unpacker (step 1)
   PATCHES_OVERVIEW.md             # current map of the patches into PsoBB.exe (work in progress)
+  RE_QUALITY_REVIEW.md            # fork merge critique + gap analysis (2026-06-17)
+  DETOUR_INSTALLERS.md            # Phase 2: FUN_52dc3240/3290 detour families
+  STAGE_C_RE.md                   # Stage C bulk loops + pointer table RE
+  STAGE_A_RE.md                   # Stage A registry keys + value-name RE
+src/                              # clean C reconstruction (widescreen cascade + installers)
+  ephinea_widescreen.h / *.c        # Stages A–C, 92-VA, detour handlers (see RE_QUALITY_REVIEW)
+  detour_installer.c              # NOP + E8/E9 patch primitives
+  ephinea_rdata.h                 # verified .rdata RVAs for current unpacked build
+data/
+  detour_installs.csv             # 341 install sites from prior decompile
+  detour_installs_current.csv     # + rebased handler VAs (rebase_detours.py)
+  registry_strings.csv            # registry value-name map
+  stage_c_tables.h                # generated pointer tables (in src/, from extract_stage_c.py)
+  cascade_constants.h             # in src/ — stock scalars + breakpoint ladder
 reference/
   ephinea_decompiled_PRIORBUILD.c # raw Ghidra C of a slightly older build — the starting point to clean up
 tools/
